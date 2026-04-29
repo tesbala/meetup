@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { getAuthCookie } from "@/lib/cookieUtils";
 import {
   loadDashboardData,
   subscribeToStats,
@@ -28,23 +30,37 @@ const STATUS_CFG = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const [data,         setData]         = useState<DashboardData | null>(null);
-  const [stats,        setStats]        = useState<DashboardStats | null>(null);
-  const [notifications,setNotifications]= useState<DashboardNotification[]>([]);
-  const [recommended,  setRecommended]  = useState<DashboardEvent[]>([]);
-  const [nearby,       setNearby]       = useState<DashboardEvent[]>([]);
-  const [loading,      setLoading]      = useState(true);
-  const [error,        setError]        = useState("");
-  const [notifOpen,    setNotifOpen]    = useState(false);
-  const [greeting]                      = useState(getGreeting());
-  const [todayDate]                     = useState(formatTodayDate());
+  const router = useRouter();
+  const [uid,           setUid]           = useState<string | null>(null);
+  const [data,          setData]          = useState<DashboardData | null>(null);
+  const [stats,         setStats]         = useState<DashboardStats | null>(null);
+  const [notifications, setNotifications] = useState<DashboardNotification[]>([]);
+  const [recommended,   setRecommended]   = useState<DashboardEvent[]>([]);
+  const [nearby,        setNearby]        = useState<DashboardEvent[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState("");
+  const [notifOpen,     setNotifOpen]     = useState(false);
+  const [greeting]                        = useState(getGreeting());
+  const [todayDate]                       = useState(formatTodayDate());
 
-  // ── Initial load ────────────────────────────────────────────────────────────
+  // ── Step 1: read uid from cookie ────────────────────────────────────────────
   useEffect(() => {
+    const cookieUid = getAuthCookie();
+    if (!cookieUid) {
+      // No cookie = not logged in → back to login
+      router.replace("/");
+      return;
+    }
+    setUid(cookieUid);
+  }, []);
+
+  // ── Step 2: load data once uid is ready ────────────────────────────────────
+  useEffect(() => {
+    if (!uid) return;
     let mounted = true;
 
     (async () => {
-      const result = await loadDashboardData();
+      const result = await loadDashboardData(uid);
       if (!mounted) return;
 
       if (!result.success || !result.data) {
@@ -71,19 +87,20 @@ export default function DashboardPage() {
     })();
 
     return () => { mounted = false; };
-  }, []);
+  }, [uid]); // runs when uid is set from cookie
 
-  // ── Real-time stats ─────────────────────────────────────────────────────────
+  // ── Step 3: real-time listeners (only after uid is known) ──────────────────
   useEffect(() => {
-    const unsub = subscribeToStats(liveStats => setStats(liveStats));
+    if (!uid) return;
+    const unsub = subscribeToStats(uid, liveStats => setStats(liveStats));
     return () => unsub();
-  }, []);
+  }, [uid]);
 
-  // ── Real-time notifications ─────────────────────────────────────────────────
   useEffect(() => {
-    const unsub = subscribeToNotifications(liveNotifs => setNotifications(liveNotifs));
+    if (!uid) return;
+    const unsub = subscribeToNotifications(uid, liveNotifs => setNotifications(liveNotifs));
     return () => unsub();
-  }, []);
+  }, [uid]);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -93,8 +110,9 @@ export default function DashboardPage() {
   };
 
   const handleMarkAllRead = async () => {
+    if (!uid) return;
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    await markAllNotificationsRead();
+    await markAllNotificationsRead(uid);
   };
 
   if (loading) return <LoadingScreen />;
@@ -113,7 +131,6 @@ export default function DashboardPage() {
         @keyframes fadeUp  { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
         @keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:.4} }
         @keyframes spin    { to{transform:rotate(360deg)} }
-        @keyframes slideIn { from{opacity:0;transform:translateX(8px)} to{opacity:1;transform:translateX(0)} }
 
         .ev-card { transition:transform .18s,box-shadow .18s; }
         .ev-card:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(26,26,46,.09) !important; }
@@ -125,9 +142,7 @@ export default function DashboardPage() {
         .scrollx::-webkit-scrollbar { display:none; }
         .create-btn:hover { background:#6B63CC !important; }
         .section-link:hover { color:#3C3489 !important; }
-        -webkit-tap-highlight-color: transparent;
 
-        /* Notif backdrop */
         .notif-backdrop { position:fixed; inset:0; z-index:99; }
         .notif-panel {
           position:absolute; top:calc(100% + 10px); right:0;
@@ -137,40 +152,28 @@ export default function DashboardPage() {
           max-height:480px; overflow-y:auto;
         }
 
-        /* Stats grid */
         .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
         @media (max-width:700px) { .stats-grid { grid-template-columns:repeat(2,1fr); } }
 
-        /* Section grid */
         .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
         @media (max-width:720px) { .two-col { grid-template-columns:1fr; } }
 
-        /* Rec grid */
         .rec-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
         @media (max-width:480px) { .rec-grid { grid-template-columns:1fr; } }
 
-        /* Header row */
         .dash-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }
         .header-actions { display:flex; align-items:center; gap:10px; flex-shrink:0; }
 
-        /* Notif panel mobile */
-        @media (max-width:480px) {
-          .notif-panel { width:calc(100vw - 32px); right:-80px; }
-        }
+        @media (max-width:480px) { .notif-panel { width:calc(100vw - 32px); right:-80px; } }
 
-        /* Page padding */
         .page-pad { padding:20px 16px 48px; }
         @media (min-width:640px) { .page-pad { padding:24px 24px 48px; } }
         @media (min-width:1024px){ .page-pad { padding:28px 32px 48px; } }
 
-        /* Stat value */
         .stat-val { font-size:22px; font-weight:700; color:#1A1A2E; letter-spacing:-.03em; margin-bottom:2px; }
         @media (max-width:480px) { .stat-val { font-size:18px; } }
 
-        /* Section header */
         .sec-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
-
-        /* Interest pills */
         .int-pills { display:flex; flex-wrap:wrap; gap:7px; }
       `}</style>
 
@@ -206,7 +209,6 @@ export default function DashboardPage() {
                 )}
               </button>
 
-              {/* Notification panel */}
               {notifOpen && (
                 <>
                   <div className="notif-backdrop" onClick={() => setNotifOpen(false)} />
@@ -243,7 +245,6 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {/* Create event CTA */}
             <Link href="/create-event" className="create-btn" style={{ display:"flex", alignItems:"center", gap:"7px", padding:"10px 16px", background:"#7F77DD", borderRadius:"10px", fontSize:"13px", fontWeight:600, color:"#fff", textDecoration:"none", whiteSpace:"nowrap", flexShrink:0 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Create
@@ -270,10 +271,8 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* ── My upcoming events + Joined events ── */}
+        {/* ── My upcoming + Joined events ── */}
         <div className="two-col" style={{ marginBottom:"24px", animation:"fadeUp .4s .1s ease both", opacity:0, animationFillMode:"forwards" }}>
-
-          {/* Created upcoming */}
           <div style={{ background:"#fff", borderRadius:"16px", border:"1px solid #E8E8F0", padding:"18px" }}>
             <div className="sec-row">
               <span style={{ fontSize:"13px", fontWeight:600, color:"#1A1A2E" }}>My upcoming events</span>
@@ -288,10 +287,9 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Joined upcoming */}
           <div style={{ background:"#fff", borderRadius:"16px", border:"1px solid #E8E8F0", padding:"18px" }}>
             <div className="sec-row">
-              <span style={{ fontSize:"13px", fontWeight:600, color:"#1A1A2E" }}>Events I'm attending</span>
+              <span style={{ fontSize:"13px", fontWeight:600, color:"#1A1A2E" }}>Events I&apos;m attending</span>
               <Link href="/my-events?tab=joined" className="section-link" style={{ fontSize:"12px", color:"#7F77DD", textDecoration:"none", fontWeight:500, transition:"color .15s" }}>See all</Link>
             </div>
             {upcomingJoined.length === 0 ? (
@@ -357,16 +355,14 @@ export default function DashboardPage() {
   );
 }
 
-// ─── Mini event row (used in the two-col section) ─────────────────────────────
+// ─── Sub-components (unchanged from original) ─────────────────────────────────
+
 function MiniEventRow({ event: e, showActions }: { event: DashboardEvent; showActions?: boolean }) {
   const st = STATUS_CFG[e.status];
   const isLive = e.status === "live";
-
   return (
     <div style={{ display:"flex", alignItems:"center", gap:"11px", padding:"10px 12px", background:"#F9F9FC", borderRadius:"11px" }}>
-      <div style={{ width:"40px", height:"40px", borderRadius:"9px", background:e.categoryBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"20px", flexShrink:0 }}>
-        {e.image}
-      </div>
+      <div style={{ width:"40px", height:"40px", borderRadius:"9px", background:e.categoryBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"20px", flexShrink:0 }}>{e.image}</div>
       <div style={{ flex:1, minWidth:0 }}>
         <p style={{ fontSize:"12px", fontWeight:600, color:"#1A1A2E", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", marginBottom:"2px" }}>{e.title}</p>
         <div style={{ display:"flex", gap:"8px", alignItems:"center", flexWrap:"wrap" }}>
@@ -387,24 +383,18 @@ function MiniEventRow({ event: e, showActions }: { event: DashboardEvent; showAc
   );
 }
 
-// ─── Full event card (recommended grid) ──────────────────────────────────────
 function EventCard({ event: e, delay }: { event: DashboardEvent; delay: number }) {
   const pct  = e.max ? Math.round((e.joined / e.max) * 100) : 0;
   const bar  = pct>=90?"#E24B4A":pct>=70?"#BA7517":"#1D9E75";
   const st   = STATUS_CFG[e.status];
   const full = e.max !== null && e.joined >= e.max;
   const isLive = e.status === "live";
-
   return (
     <div className="ev-card" style={{ background:"#fff", borderRadius:"16px", border:"1px solid #E8E8F0", overflow:"hidden", boxShadow:"0 2px 8px rgba(26,26,46,.04)", animation:`fadeUp .4s ${delay}s ease both`, opacity:0, animationFillMode:"forwards" }}>
       <div style={{ height:"88px", background:e.categoryBg, display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 14px", position:"relative" }}>
         <span style={{ fontSize:"38px" }}>{e.image}</span>
         <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:"4px" }}>
-          {isLive && (
-            <span style={{ fontSize:"10px",fontWeight:700,padding:"2px 7px",background:"#E1F5EE",color:"#085041",borderRadius:"20px",display:"flex",alignItems:"center",gap:"3px" }}>
-              <span style={{ width:"5px",height:"5px",borderRadius:"50%",background:"#1D9E75",animation:"pulse 1.5s infinite",display:"inline-block" }}/>Live
-            </span>
-          )}
+          {isLive && <span style={{ fontSize:"10px",fontWeight:700,padding:"2px 7px",background:"#E1F5EE",color:"#085041",borderRadius:"20px",display:"flex",alignItems:"center",gap:"3px" }}><span style={{ width:"5px",height:"5px",borderRadius:"50%",background:"#1D9E75",animation:"pulse 1.5s infinite",display:"inline-block" }}/>Live</span>}
           {full && <span style={{ fontSize:"10px",fontWeight:700,padding:"2px 7px",background:"#FCEBEB",color:"#791F1F",borderRadius:"20px" }}>Full</span>}
         </div>
         <span style={{ position:"absolute",bottom:"8px",left:"12px",fontSize:"10px",fontWeight:600,padding:"2px 7px",borderRadius:"20px",background:e.type==="Free"?"#EAF3DE":"#FAEEDA",color:e.type==="Free"?"#27500A":"#633806" }}>
@@ -437,32 +427,24 @@ function EventCard({ event: e, delay }: { event: DashboardEvent; delay: number }
   );
 }
 
-// ─── Nearby card (horizontal scroll) ─────────────────────────────────────────
 function NearbyCard({ event: e }: { event: DashboardEvent }) {
   const isLive = e.status === "live";
   return (
     <div className="ev-card" style={{ flexShrink:0, width:"220px", background:"#fff", borderRadius:"14px", border:"1px solid #E8E8F0", overflow:"hidden" }}>
       <div style={{ height:"70px", background:e.categoryBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"32px", position:"relative" }}>
         {e.image}
-        {isLive && (
-          <span style={{ position:"absolute",top:"7px",right:"8px",fontSize:"9px",fontWeight:700,padding:"2px 6px",background:"#E1F5EE",color:"#085041",borderRadius:"20px",display:"flex",alignItems:"center",gap:"2px" }}>
-            <span style={{ width:"4px",height:"4px",borderRadius:"50%",background:"#1D9E75",animation:"pulse 1.5s infinite",display:"inline-block" }}/>Live
-          </span>
-        )}
+        {isLive && <span style={{ position:"absolute",top:"7px",right:"8px",fontSize:"9px",fontWeight:700,padding:"2px 6px",background:"#E1F5EE",color:"#085041",borderRadius:"20px",display:"flex",alignItems:"center",gap:"2px" }}><span style={{ width:"4px",height:"4px",borderRadius:"50%",background:"#1D9E75",animation:"pulse 1.5s infinite",display:"inline-block" }}/>Live</span>}
       </div>
       <div style={{ padding:"10px 12px" }}>
         <p style={{ fontSize:"11px",fontWeight:600,color:"#1A1A2E",marginBottom:"3px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{e.title}</p>
         <p style={{ fontSize:"10px",color:"#888780",marginBottom:"2px" }}>{e.dateDisplay} · {e.time}</p>
         <p style={{ fontSize:"10px",color:"#888780",marginBottom:"8px" }}>📍 {e.city}</p>
-        <Link href={`/events/${e.id}`} style={{ display:"block",textAlign:"center",padding:"6px",background:"#EEEDFE",borderRadius:"7px",fontSize:"11px",fontWeight:600,color:"#3C3489",textDecoration:"none" }}>
-          View →
-        </Link>
+        <Link href={`/events/${e.id}`} style={{ display:"block",textAlign:"center",padding:"6px",background:"#EEEDFE",borderRadius:"7px",fontSize:"11px",fontWeight:600,color:"#3C3489",textDecoration:"none" }}>View →</Link>
       </div>
     </div>
   );
 }
 
-// ─── Empty mini state ─────────────────────────────────────────────────────────
 function EmptyMini({ icon, text, cta, href }: { icon:string; text:string; cta:string; href:string }) {
   return (
     <div style={{ padding:"24px 16px", textAlign:"center", background:"#F9F9FC", borderRadius:"12px" }}>
@@ -473,7 +455,6 @@ function EmptyMini({ icon, text, cta, href }: { icon:string; text:string; cta:st
   );
 }
 
-// ─── Loading screen ───────────────────────────────────────────────────────────
 function LoadingScreen() {
   return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", flexDirection:"column", gap:"14px", fontFamily:"'DM Sans',sans-serif" }}>
@@ -484,7 +465,6 @@ function LoadingScreen() {
   );
 }
 
-// ─── Error screen ─────────────────────────────────────────────────────────────
 function ErrorScreen({ msg }: { msg: string }) {
   return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", flexDirection:"column", gap:"12px", padding:"32px", fontFamily:"'DM Sans',sans-serif", textAlign:"center" }}>

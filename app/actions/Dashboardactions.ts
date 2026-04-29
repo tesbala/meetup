@@ -1,9 +1,10 @@
-// app/actions/dashboardActions.ts
+// app/actions/Dashboardactions.ts
 //
 // ─────────────────────────────────────────────────────────────────────────────
 //  All Firebase Firestore logic for the Dashboard page.
-//  Dashboard page.tsx imports ONLY these functions.
-//  No Firebase code lives in the UI component.
+//  Every function now accepts a `uid` string directly —
+//  NO dependency on auth.currentUser (which is null on return visits
+//  before Firebase Auth session restores).
 // ─────────────────────────────────────────────────────────────────────────────
 
 "use client";
@@ -21,7 +22,7 @@ import {
   type Unsubscribe,
   Timestamp,
 } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 
 // ─── Shared result type ───────────────────────────────────────────────────────
 export interface ActionResult<T = undefined> {
@@ -34,7 +35,7 @@ export interface ActionResult<T = undefined> {
 
 export interface DashboardStats {
   totalEventsCreated: number;
-  totalJoined:        number;      // sum of all attendees across created events
+  totalJoined:        number;
   upcomingCount:      number;
   savedCount:         number;
   totalViews:         number;
@@ -49,9 +50,9 @@ export interface DashboardEvent {
   category:      string;
   categoryColor: string;
   categoryBg:    string;
-  date:          string;          // ISO date string  YYYY-MM-DD
-  dateDisplay:   string;          // "Sat 12 Apr"
-  time:          string;          // "6:00 PM"
+  date:          string;
+  dateDisplay:   string;
+  time:          string;
   city:          string;
   state:         string;
   joined:        number;
@@ -59,7 +60,7 @@ export interface DashboardEvent {
   type:          "Free" | "Paid";
   price?:        number;
   status:        EventStatus;
-  image:         string;          // category emoji fallback
+  image:         string;
   organizer:     string;
   role:          "creator" | "attendee";
   views?:        number;
@@ -78,13 +79,6 @@ export interface DashboardNotification {
   emoji:     string;
   eventId?:  string;
   createdAt: Timestamp | null;
-}
-
-export interface UserInterest {
-  id:    string;
-  label: string;
-  bg:    string;
-  color: string;
 }
 
 export interface DashboardData {
@@ -116,46 +110,36 @@ const CAT_COLORS: Record<string, { color: string; bg: string; emoji: string }> =
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Convert a Firestore Timestamp or ISO string → "Sat 12 Apr" */
 function formatDateDisplay(date: string | Timestamp | null): string {
   if (!date) return "";
-  const d = date instanceof Timestamp
-    ? date.toDate()
-    : new Date(date);
+  const d = date instanceof Timestamp ? date.toDate() : new Date(date);
   return d.toLocaleDateString("en-IN", { weekday:"short", day:"numeric", month:"short" });
 }
 
-/** Convert a Firestore Timestamp or ISO string → "YYYY-MM-DD" */
 function toIsoDate(date: string | Timestamp | null): string {
   if (!date) return "";
   const d = date instanceof Timestamp ? date.toDate() : new Date(date);
   return d.toISOString().split("T")[0];
 }
 
-/** Derive EventStatus from Firestore status field + date */
-function deriveStatus(
-  storedStatus: string,
-  isoDate:      string
-): EventStatus {
+function deriveStatus(storedStatus: string, isoDate: string): EventStatus {
   if (storedStatus === "cancelled") return "cancelled";
   const today = new Date().toISOString().split("T")[0];
-  if (isoDate < today)  return "past";
+  if (isoDate < today)   return "past";
   if (isoDate === today) return "live";
   return "upcoming";
 }
 
-/** Format a Firestore Timestamp → "2 hours ago" style */
 function timeAgo(ts: Timestamp | null): string {
   if (!ts) return "";
   const secs = Math.floor((Date.now() - ts.toMillis()) / 1000);
-  if (secs < 60)   return "Just now";
-  if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
-  if (secs < 86400)return `${Math.floor(secs / 3600)} hr${Math.floor(secs / 3600) > 1 ? "s" : ""} ago`;
+  if (secs < 60)     return "Just now";
+  if (secs < 3600)   return `${Math.floor(secs / 60)} min ago`;
+  if (secs < 86400)  return `${Math.floor(secs / 3600)} hr${Math.floor(secs / 3600) > 1 ? "s" : ""} ago`;
   if (secs < 172800) return "Yesterday";
   return `${Math.floor(secs / 86400)} days ago`;
 }
 
-/** Map a raw Firestore event doc → DashboardEvent */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapEvent(id: string, data: any, role: "creator" | "attendee"): DashboardEvent {
   const cat    = (data.category ?? "").toLowerCase();
@@ -187,48 +171,39 @@ function mapEvent(id: string, data: any, role: "creator" | "attendee"): Dashboar
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  1.  LOAD ALL DASHBOARD DATA  (single call from Dashboard useEffect)
+//  1.  LOAD ALL DASHBOARD DATA
+//      Pass the uid from getAuthCookie() — no Firebase Auth session needed.
 // ─────────────────────────────────────────────────────────────────────────────
-export async function loadDashboardData(): Promise<ActionResult<DashboardData>> {
+export async function loadDashboardData(uid: string): Promise<ActionResult<DashboardData>> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
     // ── 1a. User profile ──────────────────────────────────────────────────
-    const profileSnap = await getDoc(doc(db, "users", user.uid));
+    const profileSnap = await getDoc(doc(db, "users", uid));
     const profile     = profileSnap.exists() ? profileSnap.data() : {};
 
-    const userName  = `${profile.firstName ?? ""} ${profile.lastName ?? ""}`.trim()
-                      || user.displayName
-                      || "User";
+    const userName  = `${profile.firstName ?? ""} ${profile.lastName ?? ""}`.trim() || "User";
     const userCity  = profile.area     ?? profile.district ?? "";
     const userState = profile.state    ?? "";
     const interests = profile.interests ?? [];
 
     // ── 1b. Events CREATED by this user ───────────────────────────────────
-    // NOTE: orderBy("date") requires a composite index (creatorId + date).
-    // Until the index is built in Firebase Console, we sort client-side.
-    const createdQuery = query(
+    const createdSnap = await getDocs(query(
       collection(db, "events"),
-      where("creatorId", "==", user.uid),
+      where("creatorId", "==", uid),
       limit(20)
-    );
-    const createdSnap = await getDocs(createdQuery);
+    ));
     const createdEvents: DashboardEvent[] = createdSnap.docs
       .map(d => mapEvent(d.id, d.data(), "creator"))
-      .sort((a, b) => a.date.localeCompare(b.date)); // client-side sort
+      .sort((a, b) => a.date.localeCompare(b.date));
 
     // ── 1c. Events this user JOINED ────────────────────────────────────────
-    // Strategy: query the user's joinedEvents subcollection
-    // (written by joinEventActions when a user joins)
-    const joinedQuery = query(
-      collection(db, "users", user.uid, "joinedEvents"),
+    const joinedSnap = await getDocs(query(
+      collection(db, "users", uid, "joinedEvents"),
       orderBy("joinedAt", "desc"),
       limit(10)
-    );
-    const joinedSnap = await getDocs(joinedQuery);
+    ));
 
-    // Fetch the actual event documents in parallel
     const joinedEvents: DashboardEvent[] = (
       await Promise.all(
         joinedSnap.docs.map(async jd => {
@@ -242,20 +217,15 @@ export async function loadDashboardData(): Promise<ActionResult<DashboardData>> 
     ).filter(Boolean) as DashboardEvent[];
 
     // ── 1d. Saved events count ────────────────────────────────────────────
-    const savedSnap = await getDocs(
-      collection(db, "users", user.uid, "savedEvents")
-    );
+    const savedSnap  = await getDocs(collection(db, "users", uid, "savedEvents"));
     const savedCount = savedSnap.size;
 
     // ── 1e. Notifications ──────────────────────────────────────────────────
-    // NOTE: orderBy("createdAt") with where("userId") requires a composite index.
-    // Sorting client-side until the index is built.
-    const notifQuery = query(
+    const notifSnap = await getDocs(query(
       collection(db, "notifications"),
-      where("userId", "==", user.uid),
+      where("userId", "==", uid),
       limit(10)
-    );
-    const notifSnap = await getDocs(notifQuery);
+    ));
     const notifications: DashboardNotification[] = notifSnap.docs
       .map(d => {
         const data = d.data();
@@ -273,18 +243,10 @@ export async function loadDashboardData(): Promise<ActionResult<DashboardData>> 
           createdAt: data.createdAt ?? null,
         };
       })
-      .sort((a, b) => {
-        // Sort newest first client-side
-        const aMs = a.createdAt?.toMillis?.() ?? 0;
-        const bMs = b.createdAt?.toMillis?.() ?? 0;
-        return bMs - aMs;
-      });
+      .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
 
     // ── 1f. Compute stats ─────────────────────────────────────────────────
-    const today         = new Date().toISOString().split("T")[0];
-    const upcomingCount = createdEvents.filter(
-      e => e.status === "upcoming" || e.status === "live"
-    ).length;
+    const upcomingCount = createdEvents.filter(e => e.status === "upcoming" || e.status === "live").length;
     const totalJoined   = createdEvents.reduce((s, e) => s + e.joined, 0);
     const totalViews    = createdEvents.reduce((s, e) => s + (e.views ?? 0), 0);
     const totalRevenue  = createdEvents.reduce((s, e) => s + (e.revenue ?? 0), 0);
@@ -300,44 +262,23 @@ export async function loadDashboardData(): Promise<ActionResult<DashboardData>> 
 
     return {
       success: true,
-      data: {
-        stats,
-        createdEvents,
-        joinedEvents,
-        notifications,
-        userName,
-        userCity,
-        userState,
-        interests,
-      },
+      data: { stats, createdEvents, joinedEvents, notifications, userName, userCity, userState, interests },
     };
   } catch (err) {
-    console.error("[loadDashboardData]", err);
     return { success: false, error: String(err) };
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  2.  REAL-TIME STATS LISTENER
-//      Subscribes to the user's events and updates joined counts live.
-//      Returns an unsubscribe function — call it in the useEffect cleanup.
-//
-//  Usage in Dashboard:
-//    useEffect(() => {
-//      const unsub = subscribeToStats((stats) => setStats(stats));
-//      return () => unsub();
-//    }, []);
+//  2.  REAL-TIME STATS LISTENER  — pass uid from cookie
 // ─────────────────────────────────────────────────────────────────────────────
 export function subscribeToStats(
+  uid: string,
   onUpdate: (stats: DashboardStats) => void
 ): Unsubscribe {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+  if (!uid) return () => {};
 
-  const q = query(
-    collection(db, "events"),
-    where("creatorId", "==", user.uid)
-  );
+  const q = query(collection(db, "events"), where("creatorId", "==", uid));
 
   return onSnapshot(q, snapshot => {
     const events = snapshot.docs.map(d => d.data());
@@ -350,34 +291,26 @@ export function subscribeToStats(
         const iso = toIsoDate(e.date ?? null);
         return iso >= today && e.status !== "cancelled";
       }).length,
-      savedCount:         0,  // updated separately
-      totalViews:         events.reduce((s, e) => s + (e.views ?? 0), 0),
-      totalRevenue:       events.reduce((s, e) => s + (e.revenue ?? 0), 0),
+      savedCount:   0,
+      totalViews:   events.reduce((s, e) => s + (e.views ?? 0), 0),
+      totalRevenue: events.reduce((s, e) => s + (e.revenue ?? 0), 0),
     });
   });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  3.  REAL-TIME NOTIFICATIONS LISTENER
-//      Keeps the notification badge and panel live.
-//
-//  Usage:
-//    useEffect(() => {
-//      const unsub = subscribeToNotifications((notifs) => setNotifications(notifs));
-//      return () => unsub();
-//    }, []);
+//  3.  REAL-TIME NOTIFICATIONS LISTENER  — pass uid from cookie
 // ─────────────────────────────────────────────────────────────────────────────
 export function subscribeToNotifications(
+  uid: string,
   onUpdate: (notifs: DashboardNotification[]) => void
 ): Unsubscribe {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+  if (!uid) return () => {};
 
   const q = query(
     collection(db, "notifications"),
-    where("userId", "==", user.uid),
+    where("userId", "==", uid),
     limit(10)
-    // orderBy removed — sort client-side until composite index is built
   );
 
   return onSnapshot(q, snapshot => {
@@ -405,9 +338,7 @@ export function subscribeToNotifications(
 // ─────────────────────────────────────────────────────────────────────────────
 //  4.  MARK NOTIFICATION AS READ
 // ─────────────────────────────────────────────────────────────────────────────
-export async function markNotificationRead(
-  notificationId: string
-): Promise<ActionResult> {
+export async function markNotificationRead(notificationId: string): Promise<ActionResult> {
   try {
     const { updateDoc } = await import("firebase/firestore");
     await updateDoc(doc(db, "notifications", notificationId), { read: true });
@@ -418,17 +349,16 @@ export async function markNotificationRead(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  5.  MARK ALL NOTIFICATIONS READ
+//  5.  MARK ALL NOTIFICATIONS READ  — pass uid from cookie
 // ─────────────────────────────────────────────────────────────────────────────
-export async function markAllNotificationsRead(): Promise<ActionResult> {
+export async function markAllNotificationsRead(uid: string): Promise<ActionResult> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
     const { updateDoc, writeBatch } = await import("firebase/firestore");
     const q = query(
       collection(db, "notifications"),
-      where("userId", "==", user.uid),
+      where("userId", "==", uid),
       where("read",   "==", false)
     );
     const snap  = await getDocs(q);
@@ -442,8 +372,7 @@ export async function markAllNotificationsRead(): Promise<ActionResult> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  6.  LOAD RECOMMENDED EVENTS
-//      Uses the user's interests + location for the "Recommended for you" feed.
+//  6.  LOAD RECOMMENDED EVENTS  (no uid needed — public query)
 // ─────────────────────────────────────────────────────────────────────────────
 export async function loadRecommendedEvents(
   interests: string[],
@@ -451,10 +380,6 @@ export async function loadRecommendedEvents(
   maxResults = 6
 ): Promise<ActionResult<DashboardEvent[]>> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
-
-    // Query by first interest + state for targeted results
     const primaryInterest = interests[0];
     let q;
 
@@ -478,7 +403,6 @@ export async function loadRecommendedEvents(
         limit(maxResults)
       );
     } else {
-      // Fallback: most popular events
       q = query(
         collection(db, "events"),
         where("status", "!=", "cancelled"),
@@ -489,15 +413,14 @@ export async function loadRecommendedEvents(
     }
 
     const snap = await getDocs(q);
-    const events = snap.docs.map(d => mapEvent(d.id, d.data(), "attendee"));
-    return { success: true, data: events };
+    return { success: true, data: snap.docs.map(d => mapEvent(d.id, d.data(), "attendee")) };
   } catch (err) {
     return { success: false, error: String(err) };
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  7.  LOAD NEARBY EVENTS  (same state)
+//  7.  LOAD NEARBY EVENTS  (no uid needed — public query)
 // ─────────────────────────────────────────────────────────────────────────────
 export async function loadNearbyEvents(
   userState: string,
@@ -516,18 +439,14 @@ export async function loadNearbyEvents(
     );
 
     const snap = await getDocs(q);
-    return {
-      success: true,
-      data: snap.docs.map(d => mapEvent(d.id, d.data(), "attendee")),
-    };
+    return { success: true, data: snap.docs.map(d => mapEvent(d.id, d.data(), "attendee")) };
   } catch (err) {
     return { success: false, error: String(err) };
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  8.  GET GREETING
-//      Returns "Good morning", "Good afternoon", or "Good evening"
+//  8 & 9.  HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 export function getGreeting(): string {
   const h = new Date().getHours();
@@ -536,49 +455,31 @@ export function getGreeting(): string {
   return "Good evening";
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  9.  FORMAT TODAY'S DATE  →  "Saturday, 12 April 2025"
-// ─────────────────────────────────────────────────────────────────────────────
 export function formatTodayDate(): string {
   return new Date().toLocaleDateString("en-IN", {
-    weekday: "long",
-    day:     "numeric",
-    month:   "long",
-    year:    "numeric",
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 }
 
 // ─── Notification styling helpers ─────────────────────────────────────────────
 function notifIconBg(type: string): string {
   const map: Record<string, string> = {
-    join:      "#EEEDFE",
-    reminder:  "#FAEEDA",
-    update:    "#E6F1FB",
-    cancel:    "#FCEBEB",
-    new_event: "#FBEAF0",
-    system:    "#E1F5EE",
+    join:"#EEEDFE", reminder:"#FAEEDA", update:"#E6F1FB",
+    cancel:"#FCEBEB", new_event:"#FBEAF0", system:"#E1F5EE",
   };
   return map[type] ?? "#F1EFE8";
 }
 function notifIconColor(type: string): string {
   const map: Record<string, string> = {
-    join:      "#534AB7",
-    reminder:  "#854F0B",
-    update:    "#185FA5",
-    cancel:    "#A32D2D",
-    new_event: "#72243E",
-    system:    "#085041",
+    join:"#534AB7", reminder:"#854F0B", update:"#185FA5",
+    cancel:"#A32D2D", new_event:"#72243E", system:"#085041",
   };
   return map[type] ?? "#444441";
 }
 function notifEmoji(type: string): string {
   const map: Record<string, string> = {
-    join:      "👤",
-    reminder:  "🔔",
-    update:    "📍",
-    cancel:    "❌",
-    new_event: "🎉",
-    system:    "✅",
+    join:"👤", reminder:"🔔", update:"📍",
+    cancel:"❌", new_event:"🎉", system:"✅",
   };
   return map[type] ?? "📢";
 }

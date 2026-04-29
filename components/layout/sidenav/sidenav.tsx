@@ -136,54 +136,57 @@ const NAV_ITEMS: NavItem[] = [
     icon: <HomeIcon />,
   },
   
-  {
-    id: "explore",
-    path: "/explore",
-    label: "Explore events",
-    icon: <ExploreIcon />,
-    subItems: [
-      { path: "/explore/tech", label: "Tech & Business" },
-      { path: "/explore/music", label: "Music & Art" },
-      { path: "/explore/sports", label: "Sports & Health" },
-      { path: "/explore/food", label: "Food & Travel" },
-    ],
-  },
+ {
+  id: "explore",
+  path: "/explore",
+  label: "Explore events",
+  icon: <ExploreIcon />,
+  // subItems: [
+  //   { path: "/explore?category=tech", label: "Tech & Business" },
+  //   { path: "/explore?category=music", label: "Music & Art" },
+  //   { path: "/explore?category=sports", label: "Sports & Health" },
+  //   { path: "/explore?category=food", label: "Food & Travel" },
+  // ],
+},
   
-  {
-    id: "nearby",
-    path: "/nearby",
-    label: "Near me",
-    icon: <MapPinIcon />,
-  },
+  // {
+  //   id: "nearby",
+  //   path: "/nearby",
+  //   label: "Near me",
+  //   icon: <MapPinIcon />,
+  // },
+  
   {
     id: "my-events",
     path: "/my-events",
     label: "My events",
     icon: <CalendarIcon />,
-    subItems: [
-      { path: "/my-events/created", label: "Created by me" },
-      { path: "/my-events/joined", label: "Joined events" },
-      { path: "/my-events/past", label: "Past events" },
-    ],
+    // subItems: [
+    //   { path: "/my-events/created", label: "Created by me" },
+    //   { path: "/my-events/joined", label: "Joined events" },
+    //   { path: "/my-events/past", label: "Past events" },
+    // ],
   },
+
+
+  // {
+  //   id: "saved",
+  //   path: "/saved",
+  //   label: "Saved",
+  //   icon: <BookmarkIcon />,
+  //   badge: 3,
+  // },
+  // {
+  //   id: "notifications",
+  //   path: "/notifications",
+  //   label: "Notifications",
+  //   icon: <BellIcon />,
+  //   badge: 4,
+  // },
   {
-    id: "saved",
-    path: "/saved",
-    label: "Saved",
-    icon: <BookmarkIcon />,
-    badge: 3,
-  },
-  {
-    id: "notifications",
-    path: "/notifications",
-    label: "Notifications",
-    icon: <BellIcon />,
-    badge: 4,
-  },
-  {
-    id: "community",
-    path: "/community",
-    label: "Community",
+    id: "Ai support",
+    path: "/customercar",
+    label: "Ai support",
     icon: <UsersIcon />,
   },
 ];
@@ -207,9 +210,9 @@ const BOTTOM_ITEMS: NavItem[] = [
 
 const SideNav: React.FC<SideNavProps> = ({
   onClose,
-  userName = "Arjun Kumar",
-  userInitials = "AK",
-  userCity = "Chennai, TN",
+  userName = "Create Event",
+  userInitials = "MU",
+  userCity = "Expolare events",
 }) => {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
@@ -454,10 +457,11 @@ const SideNav: React.FC<SideNavProps> = ({
                   <div style={{ display: "flex", alignItems: "center" }}>
                     <Link
                       href={item.path}
-                      onClick={() => {
-                        handleLink();
-                        if (hasSubItems && !collapsed) toggleExpand(item.id);
-                      }}
+                      onClick={handleLink}
+                      // onClick={() => {
+                      //   handleLink();
+                      //   if (hasSubItems && !collapsed) toggleExpand(item.id);
+                      // }}
                       className="nav-item-btn"
                       style={{
                         flex: 1,
@@ -494,7 +498,8 @@ const SideNav: React.FC<SideNavProps> = ({
                     {/* Expand chevron for sub-items */}
                     {hasSubItems && !collapsed && (
                       <button
-                        onClick={() => toggleExpand(item.id)}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleExpand(item.id); }}
+                       // onClick={() => toggleExpand(item.id)}
                         style={{
                           width: "30px", height: "37px",
                           display: "flex", alignItems: "center", justifyContent: "center",
@@ -633,7 +638,8 @@ const SideNav: React.FC<SideNavProps> = ({
                     </Link>
                     {hasSubItems && !collapsed && (
                       <button
-                        onClick={() => toggleExpand(item.id)}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleExpand(item.id); }}
+                        //onClick={() => toggleExpand(item.id)}
                         style={{
                           width: "30px", height: "37px",
                           display: "flex", alignItems: "center", justifyContent: "center",

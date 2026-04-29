@@ -1,6 +1,6 @@
-// app/actions/myEventsActions.ts
+// app/actions/my-events.ts
 // All Firebase Firestore logic for the My Events page.
-// MyEventsPage.tsx imports ONLY these functions — no Firebase in the UI.
+// Every function now takes a `uid` param — NO auth.currentUser dependency.
 
 "use client";
 
@@ -15,7 +15,7 @@ import {
   deleteDoc,
   Timestamp,
 } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { db } from "@/lib/firebase";  // ← auth removed, not needed
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,9 +33,9 @@ export interface MyEvent {
   category: string;
   categoryColor: string;
   categoryBg: string;
-  date: string;         // ISO "YYYY-MM-DD"
-  dateDisplay: string;  // "Sat 12 Apr"
-  time: string;         // "6:00 PM"
+  date: string;
+  dateDisplay: string;
+  time: string;
   city: string;
   state: string;
   joined: number;
@@ -43,7 +43,7 @@ export interface MyEvent {
   type: "Free" | "Paid";
   price?: number;
   status: "upcoming" | "live" | "past" | "cancelled";
-  image: string;        // category emoji
+  image: string;
   organizer: string;
   role: "creator" | "attendee";
   views?: number;
@@ -60,7 +60,7 @@ export interface EventStats {
 
 export interface MyEventsSummary {
   totalCreated: number;
-  totalJoined: number;    // sum of joined across all created events
+  totalJoined: number;
   totalViews: number;
   totalRevenue: number;
   upcomingCount: number;
@@ -70,10 +70,7 @@ export interface MyEventsSummary {
 // Constants
 // ---------------------------------------------------------------------------
 
-const CAT_COLORS: Record<
-  string,
-  { color: string; bg: string; emoji: string }
-> = {
+const CAT_COLORS: Record<string, { color: string; bg: string; emoji: string }> = {
   tech:        { color: "#3C3489", bg: "#EEEDFE", emoji: "💻" },
   music:       { color: "#633806", bg: "#FAEEDA", emoji: "🎵" },
   art:         { color: "#72243E", bg: "#FBEAF0", emoji: "🎨" },
@@ -100,13 +97,10 @@ function toIso(ts: string | Timestamp | null | undefined): string {
   return String(ts).split("T")[0];
 }
 
-function deriveStatus(
-  stored: string,
-  isoDate: string
-): MyEvent["status"] {
+function deriveStatus(stored: string, isoDate: string): MyEvent["status"] {
   if (stored === "cancelled") return "cancelled";
   const today = new Date().toISOString().split("T")[0];
-  if (isoDate < today) return "past";
+  if (isoDate < today)   return "past";
   if (isoDate === today) return "live";
   return "upcoming";
 }
@@ -114,60 +108,50 @@ function deriveStatus(
 function formatDateDisplay(isoDate: string): string {
   if (!isoDate) return "";
   const d = new Date(isoDate + "T00:00:00");
-  return d.toLocaleDateString("en-GB", {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-  }); // e.g. "Sat 12 Apr"
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function docToMyEvent(id: string, data: any, role: MyEvent["role"]): MyEvent {
-  const catKey = (data.category ?? "").toLowerCase();
-  const cat = CAT_COLORS[catKey] ?? DEFAULT_CAT;
+  const catKey  = (data.category ?? "").toLowerCase();
+  const cat     = CAT_COLORS[catKey] ?? DEFAULT_CAT;
   const isoDate = toIso(data.date);
-
   return {
     id,
-    title: data.title ?? "",
-    category: data.category ?? "",
+    title:         data.title         ?? "",
+    category:      data.category      ?? "",
     categoryColor: cat.color,
-    categoryBg: cat.bg,
-    date: isoDate,
-    dateDisplay: formatDateDisplay(isoDate),
-    time: data.time ?? data.startTime ?? "",
-    city: data.city ?? data.area ?? "",
-    state: data.state ?? "",
-    joined: data.joined ?? 0,
-    max: data.maxAttendees ?? null,
-    type: data.entryType === "Paid" ? "Paid" : "Free",
-    price: data.price,
-    status: deriveStatus(data.status ?? "", isoDate),
-    image: cat.emoji,
-    organizer: data.organizer ?? data.contactName ?? "",
+    categoryBg:    cat.bg,
+    date:          isoDate,
+    dateDisplay:   formatDateDisplay(isoDate),
+    time:          data.time          ?? data.startTime ?? "",
+    city:          data.city          ?? data.area      ?? "",
+    state:         data.state         ?? "",
+    joined:        data.joined        ?? 0,
+    max:           data.maxAttendees  ?? null,
+    type:          data.entryType === "Paid" ? "Paid" : "Free",
+    price:         data.price,
+    status:        deriveStatus(data.status ?? "", isoDate),
+    image:         cat.emoji,
+    organizer:     data.organizer     ?? data.contactName ?? "",
     role,
-    views: data.views,
-    revenue: data.revenue,
-    coverImage: data.coverImage,
+    views:         data.views,
+    revenue:       data.revenue,
+    coverImage:    data.coverImage,
   };
 }
 
 // ---------------------------------------------------------------------------
-// 1. loadCreatedEvents
+// 1. loadCreatedEvents — pass uid from cookie
 // ---------------------------------------------------------------------------
-
-export async function loadCreatedEvents(): Promise<ActionResult<MyEvent[]>> {
+export async function loadCreatedEvents(uid: string): Promise<ActionResult<MyEvent[]>> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
-    // ✅ No orderBy — sort client-side to avoid composite index requirement
-    const snap = await getDocs(
-      query(
-        collection(db, "events"),
-        where("creatorId", "==", user.uid)
-      )
-    );
+    const snap = await getDocs(query(
+      collection(db, "events"),
+      where("creatorId", "==", uid)
+    ));
 
     const events: MyEvent[] = snap.docs
       .map((d) => docToMyEvent(d.id, d.data(), "creator"))
@@ -180,31 +164,23 @@ export async function loadCreatedEvents(): Promise<ActionResult<MyEvent[]>> {
 }
 
 // ---------------------------------------------------------------------------
-// 2. loadJoinedEvents  (upcoming + live only)
+// 2. loadJoinedEvents — pass uid from cookie
 // ---------------------------------------------------------------------------
-
-export async function loadJoinedEvents(): Promise<ActionResult<MyEvent[]>> {
+export async function loadJoinedEvents(uid: string): Promise<ActionResult<MyEvent[]>> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
-    const joinedSnap = await getDocs(
-      collection(db, "users", user.uid, "joinedEvents")
-    );
-
+    const joinedSnap = await getDocs(collection(db, "users", uid, "joinedEvents"));
     if (joinedSnap.empty) return { success: true, data: [] };
 
-    // Fetch all event docs in parallel
     const eventDocs = await Promise.all(
       joinedSnap.docs.map((ref) => getDoc(doc(db, "events", ref.id)))
     );
 
-    const today = new Date().toISOString().split("T")[0];
-
     const events: MyEvent[] = eventDocs
       .filter((d) => d.exists())
       .map((d) => docToMyEvent(d.id, d.data()!, "attendee"))
-      .filter((e) => e.date >= today && e.status !== "cancelled"); // keep upcoming + live
+      .filter((e) => e.status !== "cancelled");
 
     return { success: true, data: events };
   } catch (err) {
@@ -213,18 +189,13 @@ export async function loadJoinedEvents(): Promise<ActionResult<MyEvent[]>> {
 }
 
 // ---------------------------------------------------------------------------
-// 3. loadSavedEvents
+// 3. loadSavedEvents — pass uid from cookie
 // ---------------------------------------------------------------------------
-
-export async function loadSavedEvents(): Promise<ActionResult<MyEvent[]>> {
+export async function loadSavedEvents(uid: string): Promise<ActionResult<MyEvent[]>> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
-    const savedSnap = await getDocs(
-      collection(db, "users", user.uid, "savedEvents")
-    );
-
+    const savedSnap = await getDocs(collection(db, "users", uid, "savedEvents"));
     if (savedSnap.empty) return { success: true, data: [] };
 
     const eventDocs = await Promise.all(
@@ -242,31 +213,23 @@ export async function loadSavedEvents(): Promise<ActionResult<MyEvent[]>> {
 }
 
 // ---------------------------------------------------------------------------
-// 4. loadPastEvents  (created past + attended past, deduped, desc)
+// 4. loadPastEvents — pass uid from cookie
 // ---------------------------------------------------------------------------
-
-export async function loadPastEvents(): Promise<ActionResult<MyEvent[]>> {
+export async function loadPastEvents(uid: string): Promise<ActionResult<MyEvent[]>> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
     const today = new Date().toISOString().split("T")[0];
 
-    // ── Created past events ──────────────────────────────────────────────────
-    const createdSnap = await getDocs(
-      query(
-        collection(db, "events"),
-        where("creatorId", "==", user.uid)
-      )
-    );
+    const createdSnap = await getDocs(query(
+      collection(db, "events"),
+      where("creatorId", "==", uid)
+    ));
     const createdPast: MyEvent[] = createdSnap.docs
       .map((d) => docToMyEvent(d.id, d.data(), "creator"))
       .filter((e) => e.date < today || e.status === "cancelled");
 
-    // ── Attended past events ─────────────────────────────────────────────────
-    const joinedSnap = await getDocs(
-      collection(db, "users", user.uid, "joinedEvents")
-    );
+    const joinedSnap = await getDocs(collection(db, "users", uid, "joinedEvents"));
 
     let attendedPast: MyEvent[] = [];
     if (!joinedSnap.empty) {
@@ -279,15 +242,11 @@ export async function loadPastEvents(): Promise<ActionResult<MyEvent[]>> {
         .filter((e) => e.date < today);
     }
 
-    // ── Combine & deduplicate (creator role wins on conflict) ────────────────
     const map = new Map<string, MyEvent>();
     for (const e of attendedPast) map.set(e.id, e);
-    for (const e of createdPast) map.set(e.id, e); // creator overwrites attendee
+    for (const e of createdPast)  map.set(e.id, e); // creator wins
 
-    const events = Array.from(map.values()).sort((a, b) =>
-      b.date.localeCompare(a.date) // descending
-    );
-
+    const events = Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
     return { success: true, data: events };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -295,25 +254,20 @@ export async function loadPastEvents(): Promise<ActionResult<MyEvent[]>> {
 }
 
 // ---------------------------------------------------------------------------
-// 5. cancelEvent
+// 5. cancelEvent — pass uid from cookie for permission check
 // ---------------------------------------------------------------------------
-
-export async function cancelEvent(eventId: string): Promise<ActionResult> {
+export async function cancelEvent(eventId: string, uid: string): Promise<ActionResult> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
-    const eventRef = doc(db, "events", eventId);
+    const eventRef  = doc(db, "events", eventId);
     const eventSnap = await getDoc(eventRef);
-
     if (!eventSnap.exists()) return { success: false, error: "Event not found." };
 
     const data = eventSnap.data();
-    if (data.creatorId !== user.uid)
-      return { success: false, error: "Permission denied." };
+    if (data.creatorId !== uid) return { success: false, error: "Permission denied." };
 
     await updateDoc(eventRef, { status: "cancelled" });
-
     return { success: true };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -321,32 +275,21 @@ export async function cancelEvent(eventId: string): Promise<ActionResult> {
 }
 
 // ---------------------------------------------------------------------------
-// 6. deleteEvent
+// 6. deleteEvent — pass uid from cookie for permission check
 // ---------------------------------------------------------------------------
-
-export async function deleteEvent(eventId: string): Promise<ActionResult> {
+export async function deleteEvent(eventId: string, uid: string): Promise<ActionResult> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
-    const eventRef = doc(db, "events", eventId);
+    const eventRef  = doc(db, "events", eventId);
     const eventSnap = await getDoc(eventRef);
-
     if (!eventSnap.exists()) return { success: false, error: "Event not found." };
 
     const data = eventSnap.data();
-    if (data.creatorId !== user.uid)
-      return { success: false, error: "Permission denied." };
+    if (data.creatorId !== uid) return { success: false, error: "Permission denied." };
 
-    // Delete participants subcollection in parallel
-    const participantsSnap = await getDocs(
-      collection(db, "events", eventId, "participants")
-    );
-    await Promise.all(
-      participantsSnap.docs.map((p) => deleteDoc(p.ref))
-    );
-
-    // Delete the event document itself
+    const participantsSnap = await getDocs(collection(db, "events", eventId, "participants"));
+    await Promise.all(participantsSnap.docs.map((p) => deleteDoc(p.ref)));
     await deleteDoc(eventRef);
 
     return { success: true };
@@ -356,15 +299,11 @@ export async function deleteEvent(eventId: string): Promise<ActionResult> {
 }
 
 // ---------------------------------------------------------------------------
-// 7. loadEventStats
+// 7. loadEventStats — pass uid from cookie
 // ---------------------------------------------------------------------------
-
-export async function loadEventStats(
-  eventId: string
-): Promise<ActionResult<EventStats>> {
+export async function loadEventStats(eventId: string, uid: string): Promise<ActionResult<EventStats>> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
     const [eventSnap, participantsSnap] = await Promise.all([
       getDoc(doc(db, "events", eventId)),
@@ -374,13 +313,12 @@ export async function loadEventStats(
     if (!eventSnap.exists()) return { success: false, error: "Event not found." };
 
     const data = eventSnap.data();
-
     return {
       success: true,
       data: {
-        joined: data.joined ?? 0,
-        views: data.views ?? 0,
-        revenue: data.revenue ?? 0,
+        joined:           data.joined   ?? 0,
+        views:            data.views    ?? 0,
+        revenue:          data.revenue  ?? 0,
         participantCount: participantsSnap.size,
       },
     };
@@ -390,47 +328,31 @@ export async function loadEventStats(
 }
 
 // ---------------------------------------------------------------------------
-// 8. loadMyEventsSummary
+// 8. loadMyEventsSummary — pass uid from cookie
 // ---------------------------------------------------------------------------
-
-export async function loadMyEventsSummary(): Promise<
-  ActionResult<MyEventsSummary>
-> {
+export async function loadMyEventsSummary(uid: string): Promise<ActionResult<MyEventsSummary>> {
   try {
-    const user = auth.currentUser;
-    if (!user) return { success: false, error: "Not signed in." };
+    if (!uid) return { success: false, error: "Not signed in." };
 
-    const today = new Date().toISOString().split("T")[0];
+    const createdSnap = await getDocs(query(
+      collection(db, "events"),
+      where("creatorId", "==", uid)
+    ));
 
-    // Fetch all created events
-    const createdSnap = await getDocs(
-      query(
-        collection(db, "events"),
-        where("creatorId", "==", user.uid)
-      )
-    );
-
-    let totalJoined = 0;
-    let totalViews = 0;
+    let totalJoined  = 0;
+    let totalViews   = 0;
     let totalRevenue = 0;
     let upcomingCount = 0;
 
     createdSnap.docs.forEach((d) => {
-      const data = d.data();
+      const data    = d.data();
       const isoDate = toIso(data.date);
-      const status = deriveStatus(data.status ?? "", isoDate);
-
-      totalJoined  += data.joined  ?? 0;
-      totalViews   += data.views   ?? 0;
-      totalRevenue += data.revenue ?? 0;
-
+      const status  = deriveStatus(data.status ?? "", isoDate);
+      totalJoined   += data.joined  ?? 0;
+      totalViews    += data.views   ?? 0;
+      totalRevenue  += data.revenue ?? 0;
       if (status === "upcoming" || status === "live") upcomingCount++;
     });
-
-    // Count joined events from subcollection
-    const joinedSnap = await getDocs(
-      collection(db, "users", user.uid, "joinedEvents")
-    );
 
     return {
       success: true,

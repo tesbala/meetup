@@ -1,42 +1,35 @@
 "use client";
 
+// app/page.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+//  Root page: checks for a saved UID cookie.
+//  • Cookie found  → go straight to /dashboard  (no sign-in prompt)
+//  • No cookie     → show the Auth (Login / Signup) page
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-
 import AuthPages from "./(auth)/Authpages/page";
-///import Dashboard from "@/components/app/dashboard/dashboard";
-
-// 🔍 Helper to read cookies
-const getCookie = (name: string) => {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop()?.split(";").shift();
-};
+import { getAuthCookie } from "@/lib/cookieUtils";
 
 export default function Home() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
-    const cookie = getCookie("isLoggedIn");
-
-    if (cookie === "true") {
-      setIsLoggedIn(true);
-      router.push("/dashboard"); // ✅ redirect
+    const uid = getAuthCookie();
+    if (uid) {
+      setHasSession(true);
+      router.replace("/dashboard");
+    } else {
+      setChecked(true);
     }
-
-    setLoading(false);
   }, []);
 
-  // ⏳ prevent flicker
-  if (loading) return null;
+  // Prevent flash: wait until cookie check is done
+  if (!checked && !hasSession) return null;
 
-  // ❌ Not logged in → show auth page
-  if (!isLoggedIn) {
-    return <AuthPages />;
-  }
-
-  // (optional fallback if redirect not triggered)
+  // No cookie → show login / signup
   return <AuthPages />;
 }

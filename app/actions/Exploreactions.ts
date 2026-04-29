@@ -205,10 +205,10 @@ export async function loadExploreEvents(
     if (cityVal) constraints.push(where("city", "==", cityVal));
 
     // Category filter — only add if NOT "All"
-    const catVal = filters.category && filters.category !== "All"
-      ? filters.category : null;
-    if (catVal) constraints.push(where("category", "==", catVal));
-
+   // Category filter — lowercase to match Firestore stored values
+const catVal = filters.category && filters.category !== "All"
+  ? filters.category.toLowerCase() : null;
+if (catVal) constraints.push(where("category", "==", catVal));
     // Entry type filter
     if (filters.entryType && filters.entryType !== "All") {
       constraints.push(where("entryType", "==", filters.entryType));
@@ -252,7 +252,7 @@ export async function loadExploreEvents(
     }
 
     // Remove past events from general explore (keep if showing all)
-events = events.filter(e => e.status !== "past" && e.status !== "cancelled");
+///events = events.filter(e => e.status !== "past" && e.status !== "cancelled");
 
     // Client-side sort
     switch (filters.sortBy ?? "soonest") {
