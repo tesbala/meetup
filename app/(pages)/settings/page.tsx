@@ -5,5 +5,6 @@ const Settings = () => {
       <SettingsPage />
   )
 }
+/////thi checkitng for git 
 
 export default Settings
